@@ -64,7 +64,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_PORT): cv.port,
     vol.Required(CONF_SLAVE_ID): cv.positive_int,
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-    vol.Optional(CONF_SCAN_INTERVAL, default=timedelta(seconds=10)): cv.time_period,
+    vol.Optional(CONF_SCAN_INTERVAL, default=timedelta(minutes=10)): cv.time_period,
 })
 
 # Global locks to prevent concurrent connections to the same IP:Port
@@ -83,7 +83,7 @@ def crc16(data: bytes):
     return struct.pack('<H', crc)
 
 def get_solar_data(ip, port, slave_id):
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         s = None
         try:
@@ -228,6 +228,16 @@ class SolarInverterHub:
 
         with lock:
             raw_data = get_solar_data(self._ip, self._port, self._slave_id)
+
+        # Check for invalid zero total_power glitch
+        if raw_data and len(raw_data) >= 26:
+            try:
+                probe_total_power = int.from_bytes(raw_data[16:24], 'big')
+                if probe_total_power == 0 and self.data.get('total_power', 0) > 0:
+                    _LOGGER.warning("Inverter returned 0 for total_power while previous value was %s. Skipping glitched update.", self.data.get('total_power'))
+                    return
+            except Exception as e:
+                _LOGGER.debug("Error during early total_power probe: %s", e)
 
         # Calculate energy accumulation
         current_time = time.time()
