@@ -1,0 +1,7 @@
+{
+    "name": "Solar Inverter REMS",
+    "domains": [
+        "solar_inverter_rems"
+    ],
+    "render_readme": true
+}
