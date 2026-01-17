@@ -1,7 +1,5 @@
 {
     "name": "Solar Inverter REMS",
-    "domains": [
-        "solar_inverter_rems"
-    ],
+    "country": "KR",
     "render_readme": true
 }
