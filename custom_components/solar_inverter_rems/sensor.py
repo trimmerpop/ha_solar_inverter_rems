@@ -319,7 +319,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # Old: solar_rs485_{ip}_{slave_id}_{sensor_type}
     # New: {DOMAIN}_{entry_id}_{sensor_type}
     registry = entity_registry.async_get(hass)
-    entity_entries = entity_registry.async_entries_for_config_entry(hass, config_entry.entry_id)
+    entity_entries = registry.async_entries_for_config_entry(config_entry.entry_id)
     if entity_entries:
         _LOGGER.debug(
             "Checking existing entities for migration for config entry %s", config_entry.entry_id

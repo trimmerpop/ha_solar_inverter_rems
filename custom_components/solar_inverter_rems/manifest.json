@@ -9,5 +9,5 @@
     "@trimmerpop"
   ],
   "iot_class": "local_polling",
-  "version": "1.0.4"
+  "version": "1.0.5"
 }
