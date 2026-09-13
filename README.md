@@ -55,7 +55,7 @@ This custom component for Home Assistant integrates single-phase solar inverters
    - **IP Address**: IP address of your RS485-to-TCP bridge (e.g., `192.168.0.10`).
    - **Port**: TCP port of the bridge (e.g., `8899`).
    - **Slave ID**: Modbus Slave ID of the inverter (default is usually `1`).
-   - **Scan Interval**: How often to fetch data (in seconds, default: 10).
+   - **Scan Interval**: How often to fetch data (in seconds, default: 600 = 10 minutes).
 
 > **Note**: You can change these settings later by clicking **Configure** on the integration entry.
 
