@@ -348,7 +348,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         SolarRS485Sensor(hub, config_entry.entry_id, sensor_type)
         for sensor_type in SENSOR_TYPES
     ]
-    async_add_entities(sensors, True)
+    async_add_entities(sensors, False)
 
     return True
 
@@ -370,7 +370,6 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 class SolarRS485Sensor(SensorEntity):
     """Representation of a Solar RS485 Sensor."""
 
-    has_entity_name = True
 
     def __init__(self, hub, entry_id: str, sensor_type):
         """Initialize the sensor."""
@@ -379,7 +378,7 @@ class SolarRS485Sensor(SensorEntity):
         self._sensor_type = sensor_type
 
         sensor_info = SENSOR_TYPES[self._sensor_type]
-        self._attr_name = sensor_info[0]
+        self._attr_name = f"{DEFAULT_NAME} {sensor_info[0]}"
         self._attr_unique_id = f"{DOMAIN}_{self._entry_id}_{self._sensor_type}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
