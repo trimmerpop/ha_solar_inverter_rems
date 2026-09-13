@@ -348,7 +348,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         SolarRS485Sensor(hub, config_entry.entry_id, sensor_type)
         for sensor_type in SENSOR_TYPES
     ]
-    async_add_entities(sensors, True)
+    async_add_entities(sensors, False)
+
+    # Kick off a non-blocking initial fetch so that setup is not stalled
+    # when the inverter is off (e.g. during night-time reboots).  The
+    # Throttle on the hub guarantees only one genuine network round-trip
+    # occurs; the remaining sensors simply read the cached / offline data.
+    for sensor in sensors:
+        hass.async_create_task(hass.async_add_executor_job(sensor.update))
 
     return True
 
@@ -370,6 +377,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 class SolarRS485Sensor(SensorEntity):
     """Representation of a Solar RS485 Sensor."""
 
+    _attr_should_poll = True
 
     def __init__(self, hub, entry_id: str, sensor_type):
         """Initialize the sensor."""
