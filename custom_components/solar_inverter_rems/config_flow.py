@@ -12,6 +12,8 @@ class SolarInverterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
+            await self.async_set_unique_id(f"{user_input[CONF_IP_ADDRESS]}_{user_input[CONF_SLAVE_ID]}")
+            self._abort_if_unique_id_configured()
             return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
 
         data_schema = vol.Schema({
@@ -47,6 +49,7 @@ class SolarInverterOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(CONF_IP_ADDRESS, default=config.get(CONF_IP_ADDRESS, "")): str,
             vol.Required(CONF_PORT, default=config.get(CONF_PORT, DEFAULT_PORT)): int,
             vol.Required(CONF_SLAVE_ID, default=config.get(CONF_SLAVE_ID, 1)): int,
+            vol.Required(CONF_NAME, default=config.get(CONF_NAME, DEFAULT_NAME)): str,
             vol.Optional(CONF_SCAN_INTERVAL, default=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
         })
 

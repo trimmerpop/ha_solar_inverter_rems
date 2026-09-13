@@ -25,7 +25,10 @@ from homeassistant.const import (
 )
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Throttle
-from .const import CONF_SLAVE_ID, DEFAULT_NAME
+from .const import CONF_SLAVE_ID, DEFAULT_NAME, DOMAIN
+
+from homeassistant.helpers import entity_registry
+from homeassistant.helpers.device_registry import DeviceInfo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -312,26 +315,54 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     scan_interval_seconds = config.get(CONF_SCAN_INTERVAL, 10)
     scan_interval = timedelta(seconds=scan_interval_seconds)
 
+    # Migrate old unique_id format for existing entities if needed.
+    # Old: solar_rs485_{ip}_{slave_id}_{sensor_type}
+    # New: {DOMAIN}_{entry_id}_{sensor_type}
+    registry = entity_registry.async_get(hass)
+    entity_entries = entity_registry.async_entries_for_config_entry(hass, config_entry.entry_id)
+    if entity_entries:
+        _LOGGER.debug(
+            "Checking existing entities for migration for config entry %s", config_entry.entry_id
+        )
+        for entity_entry in entity_entries:
+            old_uid = entity_entry.unique_id
+            if old_uid and old_uid.startswith("solar_rs485_"):
+                parts = old_uid.split("_")
+                if len(parts) >= 4:
+                    sensor_type = parts[-1]
+                    new_uid = f"{DOMAIN}_{config_entry.entry_id}_{sensor_type}"
+                    if new_uid != old_uid:
+                        _LOGGER.info(
+                            "Migrating entity %s from %s to %s",
+                            entity_entry.entity_id,
+                            old_uid,
+                            new_uid,
+                        )
+                        registry.async_update_entity(
+                            entity_entry.entity_id, new_unique_id=new_uid
+                        )
+
     hub = SolarInverterHub(ip, port, slave_id, scan_interval)
 
     sensors = [
-        SolarRS485Sensor(hub, name, ip, slave_id, sensor_type)
+        SolarRS485Sensor(hub, config_entry.entry_id, sensor_type)
         for sensor_type in SENSOR_TYPES
     ]
-    async_add_entities(sensors, False)
+    async_add_entities(sensors, True)
+
+    return True
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Solar RS485 sensor."""
     ip = config[CONF_IP_ADDRESS]
     port = config[CONF_PORT]
     slave_id = config[CONF_SLAVE_ID]
-    name = config[CONF_NAME]
+    name = config.get(CONF_NAME, DEFAULT_NAME)
     scan_interval = config[CONF_SCAN_INTERVAL]
 
     hub = SolarInverterHub(ip, port, slave_id, scan_interval)
-
     sensors = [
-        SolarRS485Sensor(hub, name, ip, slave_id, sensor_type)
+        SolarRS485Sensor(hub, f"{DOMAIN}_{ip}:{port}:{slave_id}", sensor_type)
         for sensor_type in SENSOR_TYPES
     ]
     add_entities(sensors, False)
@@ -339,17 +370,23 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 class SolarRS485Sensor(SensorEntity):
     """Representation of a Solar RS485 Sensor."""
 
-    def __init__(self, hub, platform_name, ip, slave_id, sensor_type):
+    has_entity_name = True
+
+    def __init__(self, hub, entry_id: str, sensor_type):
         """Initialize the sensor."""
         self._hub = hub
-        self._platform_name = platform_name
-        self._ip = ip
-        self._slave_id = slave_id
+        self._entry_id = entry_id
         self._sensor_type = sensor_type
-        
+
         sensor_info = SENSOR_TYPES[self._sensor_type]
-        self._attr_name = f"{self._platform_name} {sensor_info[0]}"
-        self._attr_unique_id = f"solar_rs485_{self._ip}_{self._slave_id}_{self._sensor_type}"
+        self._attr_name = sensor_info[0]
+        self._attr_unique_id = f"{DOMAIN}_{self._entry_id}_{self._sensor_type}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name=DEFAULT_NAME,
+            manufacturer="Ingeteam",
+            model="Solar Inverter REMS",
+        )
         self._attr_native_unit_of_measurement = sensor_info[1]
         self._attr_icon = sensor_info[2]
         self._attr_device_class = sensor_info[3]
