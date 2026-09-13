@@ -338,7 +338,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             old_uid,
                             new_uid,
                         )
-                        registry.async_update_entity(
+                        await registry.async_update_entity(
                             entity_entry.entity_id, new_unique_id=new_uid
                         )
 
@@ -348,7 +348,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         SolarRS485Sensor(hub, config_entry.entry_id, sensor_type)
         for sensor_type in SENSOR_TYPES
     ]
-    async_add_entities(sensors, False)
+    async_add_entities(sensors, True)
 
     return True
 
