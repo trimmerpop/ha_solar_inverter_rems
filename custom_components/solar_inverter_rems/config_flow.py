@@ -14,6 +14,11 @@ from homeassistant.const import (
     CONF_SCAN_INTERVAL,
 )
 from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .const import (
     CONF_SLAVE_ID,
@@ -21,6 +26,23 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+)
+
+# Explicit selectors are used so the frontend renders plain numeric input
+# boxes instead of sliders (which voluptuous Range would produce).
+PORT_SELECTOR = NumberSelector(
+    NumberSelectorConfig(min=1, max=65535, step=1, mode=NumberSelectorMode.BOX)
+)
+SLAVE_ID_SELECTOR = NumberSelector(
+    NumberSelectorConfig(min=1, max=247, step=1, mode=NumberSelectorMode.BOX)
+)
+SCAN_INTERVAL_SELECTOR = NumberSelector(
+    NumberSelectorConfig(
+        min=5,
+        step=1,
+        mode=NumberSelectorMode.BOX,
+        unit_of_measurement="s",
+    )
 )
 
 
@@ -44,15 +66,11 @@ class SolarInverterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
                 vol.Required(CONF_IP_ADDRESS): str,
-                vol.Required(
-                    CONF_PORT, default=DEFAULT_PORT
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
-                vol.Required(CONF_SLAVE_ID, default=1): vol.All(
-                    vol.Coerce(int), vol.Range(min=1, max=247)
-                ),
-                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): (
-                    vol.All(vol.Coerce(int), vol.Range(min=5))
-                ),
+                vol.Required(CONF_PORT, default=DEFAULT_PORT): PORT_SELECTOR,
+                vol.Required(CONF_SLAVE_ID, default=1): SLAVE_ID_SELECTOR,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
+                ): SCAN_INTERVAL_SELECTOR,
             }
         )
 
@@ -93,17 +111,17 @@ class SolarInverterOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 ): str,
                 vol.Required(
                     CONF_PORT, default=config.get(CONF_PORT, DEFAULT_PORT)
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+                ): PORT_SELECTOR,
                 vol.Required(
                     CONF_SLAVE_ID, default=config.get(CONF_SLAVE_ID, 1)
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=247)),
+                ): SLAVE_ID_SELECTOR,
                 vol.Required(
                     CONF_NAME, default=config.get(CONF_NAME, DEFAULT_NAME)
                 ): str,
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=5)),
+                ): SCAN_INTERVAL_SELECTOR,
             }
         )
 
