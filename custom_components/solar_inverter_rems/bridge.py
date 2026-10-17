@@ -11,14 +11,28 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import socket
 import struct
 import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
-from homeassistant.core import HomeAssistant, callback
+try:
+    from homeassistant.core import callback  # type: ignore[import-not-found] # pyright: ignore[reportMissingImports] # noqa: I001
+except ImportError:  # pragma: no cover - dev/CI without HA installed
+    _F = TypeVar("_F", bound=Callable[..., object])
+
+    def callback(func: _F) -> _F:  # type: ignore[no-redef]
+        """Fallback no-op decorator when Home Assistant is not installed."""
+        return func
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant  # type: ignore[import-not-found]
 
 from .const import (
+    BUS_SETTLE_DELAY,
     CONNECT_DELAY,
     MAX_RETRIES,
     RESPONSE_TIMEOUT,
@@ -235,22 +249,52 @@ async def fetch_locked(
     ip: str,
     port: int,
     slave_id: int,
+    *,
+    retries: int = MAX_RETRIES,
+    timeout: float = SOCKET_TIMEOUT,
+    response_timeout: float = RESPONSE_TIMEOUT,
+    retry_delay: float = RETRY_DELAY,
 ) -> bytes | None:
     """Fetch data while holding the shared bridge lock.
 
     The blocking fetch runs in an executor thread. If this coroutine is
     cancelled, we still wait for the in-flight job to finish before releasing
-    the lock, so the RS485 bus is never accessed concurrently.
+    the lock, so the RS485 bus is never accessed concurrently. After each
+    poll the lock is held for a short settle gap (in the executor, so the
+    event loop is not blocked) to let the bus/bridge quiet down before the
+    next inverter on the same bridge is polled.
     """
     await lock.acquire()
     try:
-        future = hass.async_add_executor_job(get_solar_data, ip, port, slave_id)
+        # NOTE: hass.async_add_executor_job(target, *args) accepts only
+        # positional args (no kwargs), so bind kwargs via functools.partial.
+        future = hass.async_add_executor_job(
+            functools.partial(
+                get_solar_data,
+                ip,
+                port,
+                slave_id,
+                retries=retries,
+                timeout=timeout,
+                response_timeout=response_timeout,
+                retry_delay=retry_delay,
+            )
+        )
         try:
-            return await asyncio.shield(future)
+            result = await asyncio.shield(future)
         except asyncio.CancelledError:
             # Executor jobs cannot be cancelled; wait for it to release the bus.
             with contextlib.suppress(Exception):
-                await future
+                result = await future
             raise
+        if result is not None and BUS_SETTLE_DELAY > 0:
+            settle = hass.async_add_executor_job(time.sleep, BUS_SETTLE_DELAY)
+            try:
+                await asyncio.shield(settle)
+            except asyncio.CancelledError:
+                with contextlib.suppress(Exception):
+                    await settle
+                raise
+        return result
     finally:
         lock.release()

@@ -22,6 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
+    UpdateFailed,
 )
 
 from .bridge import acquire_bridge, fetch_locked
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     FAULT_BIT_MAP,
+    OFFLINE_AFTER_FAILURES,
     SENSOR_TYPES,
 )
 
@@ -64,6 +66,7 @@ class SolarInverterCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._lock = acquire_bridge(ip, port)
         self._last_time = time.monotonic()
         self._total_grid_energy = 0.0
+        self._consecutive_failures = 0
 
     @property
     def ip(self) -> str:
@@ -77,54 +80,98 @@ class SolarInverterCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch and parse new data from the inverter."""
-        raw_data = await fetch_locked(
-            self.hass, self._lock, self._ip, self._port, self._slave_id
-        )
+        # An inverter already confirmed offline (night / powered down) gets a
+        # fast-fail probe so it does not hold the shared bridge lock with
+        # full retries while the healthy inverters wait behind it.
+        if self._consecutive_failures >= OFFLINE_AFTER_FAILURES:
+            raw_data = await fetch_locked(
+                self.hass,
+                self._lock,
+                self._ip,
+                self._port,
+                self._slave_id,
+                retries=1,
+                timeout=1.0,
+                response_timeout=1.5,
+                retry_delay=0.0,
+            )
+        else:
+            raw_data = await fetch_locked(
+                self.hass, self._lock, self._ip, self._port, self._slave_id
+            )
 
         previous: dict[str, Any] = self.data or {}
 
-        # Check for invalid zero total_power glitch
+        # Check for invalid zero total_power glitch: a frame full of zeros
+        # (e.g. another inverter's chatter on the shared RS485 bus) must not
+        # wipe out real readings. Treat it as a transient failure.
         if raw_data and len(raw_data) >= 26:
             try:
                 probe_total_power = int.from_bytes(raw_data[16:24], "big")
                 if probe_total_power == 0 and previous.get("total_power", 0) > 0:
+                    self._consecutive_failures += 1
                     _LOGGER.warning(
-                        "Inverter returned 0 for total_power while previous value "
-                        "was %s. Skipping glitched update.",
+                        "Inverter (slave %s) returned 0 for total_power while "
+                        "previous value was %s. Keeping previous values "
+                        "(failure %s/%s).",
+                        self._slave_id,
                         previous.get("total_power"),
+                        self._consecutive_failures,
+                        OFFLINE_AFTER_FAILURES,
                     )
-                    return previous
+                    raise UpdateFailed("Glitched zero total_power frame")
+            except UpdateFailed:
+                raise
             except Exception as e:  # noqa: BLE001
                 _LOGGER.debug("Error during early total_power probe: %s", e)
 
-        # Calculate energy accumulation
+        # Time base only advances on successful polls (below). On transient
+        # failures UpdateFailed is raised with _last_time untouched, so the
+        # next successful poll integrates energy over the real gap without
+        # writing zeros in between.
         current_time = time.monotonic()
         dt = current_time - self._last_time
-        self._last_time = current_time
-
-        current_grid_power = 0
-        if raw_data and len(raw_data) >= 26:
-            current_grid_power = int.from_bytes(raw_data[10:12], "big")
-        self._total_grid_energy += (current_grid_power * dt) / 3600000.0
 
         if not raw_data or len(raw_data) < 26:
-            # Device is likely off (night time) or unreachable.
-            # Set instantaneous values to 0, fault to "Inverter Off".
-            offline_data: dict[str, Any] = {
-                "pv_voltage": 0,
-                "pv_current": 0,
-                "pv_power": 0,
-                "grid_voltage": 0,
-                "grid_current": 0,
-                "grid_power": 0,
-                "power_factor": 0,
-                "grid_frequency": 0,
-                "inverter_fault": "Inverter Off",
-                "grid_accumulated_energy": round(self._total_grid_energy, 3),
-            }
-            if "total_power" in previous:
-                offline_data["total_power"] = previous["total_power"]
-            return offline_data
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= OFFLINE_AFTER_FAILURES:
+                # Device is likely off (night time) or unreachable.
+                # Advance the time base so the offline gap does not inflate
+                # the next energy integration, then report 0 / "Inverter Off".
+                self._last_time = current_time
+                offline_data: dict[str, Any] = {
+                    "pv_voltage": 0,
+                    "pv_current": 0,
+                    "pv_power": 0,
+                    "grid_voltage": 0,
+                    "grid_current": 0,
+                    "grid_power": 0,
+                    "power_factor": 0,
+                    "grid_frequency": 0,
+                    "inverter_fault": "Inverter Off",
+                    "grid_accumulated_energy": round(self._total_grid_energy, 3),
+                }
+                if "total_power" in previous:
+                    offline_data["total_power"] = previous["total_power"]
+                return offline_data
+            # Transient failure (bus contention with several inverters on one
+            # bridge, line noise, single timeout): keep previous values by
+            # raising UpdateFailed instead of writing zeros.
+            _LOGGER.debug(
+                "Transient fetch failure for slave %s "
+                "(failure %s/%s). Keeping previous values.",
+                self._slave_id,
+                self._consecutive_failures,
+                OFFLINE_AFTER_FAILURES,
+            )
+            raise UpdateFailed(
+                f"Transient fetch failure for slave {self._slave_id}"
+            )
+
+        self._consecutive_failures = 0
+        self._last_time = current_time
+        current_grid_power = int.from_bytes(raw_data[10:12], "big")
+        self._total_grid_energy += (current_grid_power * dt) / 3600000.0
 
         try:
             parsed_data: dict[str, Any] = {}
